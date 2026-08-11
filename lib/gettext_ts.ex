@@ -14,8 +14,9 @@ defmodule GettextTs do
 
   * Catalogs are nested `locale → domain → msgid` — the same msgid in two
     domains no longer collides.
-  * One TypeScript file per locale plus a lazy `loadCatalog/1` index — the
-    frontend loads the locale it needs, not every locale at once.
+  * One TypeScript file per locale AND domain, plus a lazy `loadCatalog/2`
+    index — a route tree loads the locale it needs and, within it, only the
+    domains it renders.
   * One interpolation dialect throughout: `%{var}` (Gettext's).
 
   ## The loop
@@ -37,6 +38,7 @@ defmodule GettextTs do
         default_domain: "default",              # frontend t()'s domain
         frontend_globs: ["assets/js/**/*.{ts,tsx}"],
         extract_function: "t",
+        domain_hook: "useT",                    # `const t = useT("admin")`
         extract_ignore: :defaults,              # or a list of regexes/prefixes
         react: true                             # also emit react.tsx
 

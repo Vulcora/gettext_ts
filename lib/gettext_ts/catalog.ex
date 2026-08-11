@@ -36,8 +36,16 @@ defmodule GettextTs.Catalog do
   `%{locale => %{domain => %{msgid => msgstr}}}` for every locale on disk,
   plus the source locale synthesized as identity (msgid == msgstr) from the
   POT files — the source language needs no PO catalog.
+
+  ## Options
+
+    * `:include_source` (default `true`) — synthesize the source locale. Pass
+      `false` when identity is not worth materializing: `createT` falls back
+      to the msgid, so an identity catalog is the copy handed back to itself.
+      A source locale that DOES have PO files on disk is read from them
+      either way; the option only governs the synthesis.
   """
-  def read(root \\ Config.gettext_path()) do
+  def read(root \\ Config.gettext_path(), opts \\ []) do
     domains = domains(root)
 
     maps =
@@ -50,15 +58,17 @@ defmodule GettextTs.Catalog do
         {locale, by_domain}
       end
 
-    source = Config.source_locale()
+    if Keyword.get(opts, :include_source, true) do
+      source_map =
+        for domain <- domains, into: %{} do
+          ids = pot_msgids(root, domain)
+          {domain, for(id <- ids, into: %{}, do: {id, id})}
+        end
 
-    source_map =
-      for domain <- domains, into: %{} do
-        ids = pot_msgids(root, domain)
-        {domain, for(id <- ids, into: %{}, do: {id, id})}
-      end
-
-    Map.put_new(maps, source, source_map)
+      Map.put_new(maps, Config.source_locale(), source_map)
+    else
+      maps
+    end
   end
 
   @doc "Msgids per domain from the POT files: `%{domain => [msgid]}`, sorted."

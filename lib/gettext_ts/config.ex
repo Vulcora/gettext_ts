@@ -7,6 +7,7 @@ defmodule GettextTs.Config do
   def default_domain, do: get(:default_domain, "default")
   def frontend_globs, do: get(:frontend_globs, ["assets/js/**/*.{ts,tsx}"])
   def extract_function, do: get(:extract_function, "t")
+  def domain_hook, do: get(:domain_hook, "useT")
   def react?, do: get(:react, true)
 
   @default_ignores [
