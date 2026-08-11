@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+- `I18nProvider` takes an optional `initialCatalog`, used as the provider's
+  initial state. A per-locale server-rendered route tree can now import its
+  catalog statically and be translated in the first HTML, instead of shipping
+  source language and swapping after hydration. The lazy load is unchanged.
+
 ## [0.1.0] - 2026-08-11
 
 Initial extraction from the Vulcora apps (mosis's PO→TypeScript pipeline),
