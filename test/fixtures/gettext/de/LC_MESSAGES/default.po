@@ -1,0 +1,5 @@
+msgid "Book now"
+msgstr "Jetzt buchen"
+
+msgid "Close"
+msgstr ""

@@ -1,0 +1,5 @@
+msgid "Book now"
+msgstr "Boka nu"
+
+msgid "Close"
+msgstr "Stäng"
