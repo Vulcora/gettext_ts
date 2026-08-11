@@ -4,17 +4,29 @@ defmodule Mix.Tasks.GettextTs.Codegen do
 
   Output (under `:output_path`):
 
-    * `catalog/<locale>.ts` — one file per locale, nested domain → msgid →
-      msgstr. The frontend loads only the locale it needs.
+    * `catalog/<locale>/<domain>.ts` — one file per locale AND domain. The
+      unit of loading is the domain, not the locale: an application whose
+      admin copy outweighs its public copy would otherwise ship the admin
+      catalog to every visitor who never sees the admin.
     * `index.ts` — `locales`, `domains`, `Locale`/`Domain`/`TranslationKey`
-      types, `loadCatalog(locale)` (dynamic import), and `createT` with
-      `%{var}` interpolation and an overrides layer for runtime-edited
-      translations.
+      types, `loadCatalog(locale, domains?)` (dynamic imports, one per
+      chunk), and `createT` with `%{var}` interpolation and an overrides
+      layer for runtime-edited translations.
     * `react.tsx` — provider + `useT(domain?)` hook (unless `react: false`).
-      The provider takes an optional `initialCatalog` so a server-rendered
-      route tree is already translated before hydration.
+      The provider takes a `domains` prop (which chunks to load) and an
+      optional `initialCatalog` so a server-rendered route tree is already
+      translated before hydration.
+
+  The source locale gets no files. Its catalog is identity by construction —
+  msgid IS the copy — and `createT` already falls back to the msgid, so
+  writing it out is handing the copy back to itself in a file the browser
+  then has to download. A source locale with real PO files on disk is read
+  and emitted like any other.
 
   Files are only written when content changed, so `--check` in CI is cheap.
+  Stale files under `catalog/` are removed (and reported by `--check`): the
+  directory is generated output, and a renamed domain must not leave a
+  catalog behind that still type-checks.
   """
   use Mix.Task
 
@@ -26,14 +38,15 @@ defmodule Mix.Tasks.GettextTs.Codegen do
   def run(args) do
     {opts, _, _} = OptionParser.parse(args, switches: [check: :boolean])
 
-    data = Catalog.read()
+    data = Catalog.read(Config.gettext_path(), include_source: false)
     pot = Catalog.pot_index()
     out = Path.expand(Config.output_path(), File.cwd!())
-    File.mkdir_p!(Path.join(out, "catalog"))
 
     files =
-      for {locale, by_domain} <- data, into: %{} do
-        {Path.join([out, "catalog", "#{locale}.ts"]), locale_ts(locale, by_domain)}
+      for {locale, by_domain} <- data,
+          {domain, entries} <- by_domain,
+          into: %{} do
+        {Path.join([out, "catalog", locale, "#{domain}.ts"]), domain_ts(locale, domain, entries)}
       end
 
     files = Map.put(files, Path.join(out, "index.ts"), index_ts(data, pot))
@@ -43,52 +56,65 @@ defmodule Mix.Tasks.GettextTs.Codegen do
         do: Map.put(files, Path.join(out, "react.tsx"), react_tsx()),
         else: files
 
+    unless opts[:check], do: Enum.each(files, fn {p, _} -> File.mkdir_p!(Path.dirname(p)) end)
+
     changed =
       for {path, content} <- files, File.read(path) != {:ok, content} do
         unless opts[:check], do: File.write!(path, content)
         Path.relative_to_cwd(path)
       end
 
-    cond do
-      changed == [] ->
-        :ok
+    stale =
+      for path <- Path.wildcard(Path.join([out, "catalog", "**", "*.ts"])),
+          not Map.has_key?(files, path) do
+        unless opts[:check], do: File.rm!(path)
+        Path.relative_to_cwd(path)
+      end
 
-      opts[:check] ->
-        Mix.raise("gettext_ts.codegen --check: stale files: #{Enum.join(changed, ", ")}")
+    unless opts[:check], do: prune_empty_dirs(Path.join(out, "catalog"))
 
-      true ->
-        Mix.shell().info(
-          "gettext_ts: wrote #{length(changed)} file(s) under #{Config.output_path()}"
-        )
+    report(changed ++ stale, opts)
+  end
+
+  defp report([], _opts), do: :ok
+
+  defp report(changed, opts) do
+    if opts[:check] do
+      Mix.raise("gettext_ts.codegen --check: stale files: #{Enum.join(changed, ", ")}")
+    else
+      Mix.shell().info(
+        "gettext_ts: wrote #{length(changed)} file(s) under #{Config.output_path()}"
+      )
     end
   end
 
-  defp locale_ts(locale, by_domain) do
-    domains =
-      by_domain
-      |> Enum.sort_by(&elem(&1, 0))
-      |> Enum.map_join(",\n", fn {domain, entries} ->
-        lines =
-          entries
-          |> Enum.sort_by(&elem(&1, 0))
-          |> Enum.map_join(",\n", fn {id, str} -> "    #{ts_str(id)}: #{ts_str(str)}" end)
+  defp prune_empty_dirs(root) do
+    for dir <- Path.wildcard(Path.join(root, "*")), File.dir?(dir), File.ls!(dir) == [] do
+      File.rmdir!(dir)
+    end
+  end
 
-        "  #{ts_str(domain)}: {\n#{lines}\n  }"
-      end)
+  defp domain_ts(locale, domain, entries) do
+    lines =
+      entries
+      |> Enum.sort_by(&elem(&1, 0))
+      |> Enum.map_join(",\n", fn {id, str} -> "  #{ts_str(id)}: #{ts_str(str)}" end)
+
+    body = if lines == "", do: "", else: "\n#{lines},\n"
 
     """
     // AUTO-GENERATED by mix gettext_ts.codegen — DO NOT EDIT
-    // Locale: #{locale}. Source: PO files under priv/gettext.
-    const catalog = {
-    #{domains}
-    } as const;
+    // Locale: #{locale} · domain: #{domain}. Source: #{Config.gettext_path()}.
+    const catalog: Record<string, string> = {#{body}};
 
     export default catalog;
     """
   end
 
   defp index_ts(data, pot) do
-    locales = data |> Map.keys() |> Enum.sort()
+    locales =
+      data |> Map.keys() |> Kernel.++([Config.source_locale()]) |> Enum.uniq() |> Enum.sort()
+
     domains = pot |> Map.keys() |> Enum.sort()
     default_domain = Config.default_domain()
 
@@ -112,16 +138,49 @@ defmodule Mix.Tasks.GettextTs.Codegen do
       | #{key_union};
 
     export type DomainCatalog = Record<string, string>;
-    export type LocaleCatalog = Record<string, DomainCatalog>;
+    /**
+     * A locale's catalog, domain by domain. PARTIAL on purpose: a route tree
+     * loads the domains it renders and nothing else, so a missing domain is
+     * the normal case, not an error. Lookups in a domain that was not loaded
+     * fall through to the msgid, which is the source language.
+     */
+    export type LocaleCatalog = Partial<Record<Domain, DomainCatalog>>;
     /** Runtime-edited translations layered over the compiled catalog. */
-    export type Overrides = Partial<Record<string, DomainCatalog>>;
+    export type Overrides = Partial<Record<Domain, DomainCatalog>>;
 
-    export function loadCatalog(locale: string): Promise<LocaleCatalog> {
-      switch (locale) {
-    #{Enum.map_join(locales, "\n", fn l -> "    case #{ts_str(l)}:\n      return import(#{ts_str("./catalog/" <> l)}).then((m) => m.default as LocaleCatalog);" end)}
-        default:
-          return Promise.resolve({});
-      }
+    type ChunkLoader = () => Promise<{ default: DomainCatalog }>;
+
+    /**
+     * One dynamic import per locale/domain pair. Written out rather than
+     * built from a template string because bundlers resolve `import()` at
+     * build time: a computed specifier produces either a bundling error or
+     * one fat chunk holding every locale.
+     */
+    const chunks: Partial<Record<Locale, Partial<Record<Domain, ChunkLoader>>>> = {
+    #{chunk_map(data)}};
+
+    /**
+     * Loads a locale's catalog. `only` restricts it to the named domains —
+     * the whole point of per-domain chunks — and omitting it loads all of
+     * them. Domains without a chunk (an untranslated locale, or the source
+     * locale, which needs none) resolve to nothing and fall through to the
+     * msgid.
+     */
+    export async function loadCatalog(
+      locale: string,
+      only?: readonly Domain[]
+    ): Promise<LocaleCatalog> {
+      const byDomain = chunks[locale as Locale];
+      if (!byDomain) return {};
+      const out: LocaleCatalog = {};
+      await Promise.all(
+        (only ?? domains)
+          .filter((d) => byDomain[d] !== undefined)
+          .map(async (d) => {
+            out[d] = (await byDomain[d]!()).default;
+          })
+      );
+      return out;
     }
 
     export type TFunction = (
@@ -143,7 +202,7 @@ defmodule Mix.Tasks.GettextTs.Codegen do
      */
     export function createT(
       catalog: LocaleCatalog | null,
-      domain: string = #{ts_str(default_domain)},
+      domain: Domain = #{ts_str(default_domain)},
       overrides?: Overrides
     ): TFunction {
       return (key, vars) =>
@@ -155,6 +214,21 @@ defmodule Mix.Tasks.GettextTs.Codegen do
     """
   end
 
+  defp chunk_map(data) do
+    data
+    |> Enum.sort_by(&elem(&1, 0))
+    |> Enum.map_join("", fn {locale, by_domain} ->
+      loaders =
+        by_domain
+        |> Enum.sort_by(&elem(&1, 0))
+        |> Enum.map_join("\n", fn {domain, _} ->
+          "    #{ts_str(domain)}: () => import(#{ts_str("./catalog/#{locale}/#{domain}")}),"
+        end)
+
+      "  #{ts_str(locale)}: {\n#{loaders}\n  },\n"
+    end)
+  end
+
   defp react_tsx do
     default_domain = Config.default_domain()
 
@@ -163,12 +237,12 @@ defmodule Mix.Tasks.GettextTs.Codegen do
     "use client";
 
     import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-    import { createT, loadCatalog, type LocaleCatalog, type Overrides, type TFunction } from "./index";
+    import { createT, loadCatalog, type Domain, type LocaleCatalog, type Overrides, type TFunction } from "./index";
 
     const Ctx = createContext<{ catalog: LocaleCatalog | null; overrides?: Overrides }>({ catalog: null });
 
     /** Locale-aware translation hook. Renders source-language keys until a catalog is present. */
-    export function useT(domain: string = #{inspect(default_domain)}): TFunction {
+    export function useT(domain: Domain = #{inspect(default_domain)}): TFunction {
       const { catalog, overrides } = useContext(Ctx);
       return useMemo(() => createT(catalog, domain, overrides), [catalog, domain, overrides]);
     }
@@ -178,23 +252,36 @@ defmodule Mix.Tasks.GettextTs.Codegen do
      * translations (e.g. admin-changed copy fetched from the backend) and is
      * layered over the compiled catalog.
      *
+     * `domains` picks the chunks to load. Omit it and the whole locale
+     * arrives; name them and a route tree pays only for the copy it renders.
+     * Nest a second provider (with its own `domains`) around a subtree that
+     * needs more — an admin area inside a public site is the case this
+     * exists for.
+     *
      * `initialCatalog` seeds the FIRST render, server included. Without it the
      * catalog is null until the effect resolves, so a server-rendered page in a
      * non-source locale ships source-language HTML and swaps after hydration —
      * invisible to crawlers and a visible flash to everyone else. Import the
-     * locale's catalog statically and pass it here for a per-locale route tree;
-     * the lazy load still runs and refreshes the state afterwards.
+     * domains' chunks statically and pass them here for a per-locale route
+     * tree; the lazy load still runs and refreshes the state afterwards.
      */
-    export function I18nProvider({ locale, overrides, initialCatalog, children }: {
-      locale: string; overrides?: Overrides; initialCatalog?: LocaleCatalog; children: ReactNode;
+    export function I18nProvider({ locale, domains, overrides, initialCatalog, children }: {
+      locale: string; domains?: readonly Domain[]; overrides?: Overrides; initialCatalog?: LocaleCatalog; children: ReactNode;
     }) {
       const [catalog, setCatalog] = useState<LocaleCatalog | null>(initialCatalog ?? null);
 
+      // `domains` is almost always a fresh array literal, and a fresh array is
+      // a new dependency every render — the effect would reload the catalog
+      // forever. Serializing gives the value identity the array lacks, and
+      // keeps `[]` (load nothing) distinct from undefined (load everything).
+      const domainKey = JSON.stringify(domains ?? null);
+
       useEffect(() => {
         let cancelled = false;
-        loadCatalog(locale).then((c) => { if (!cancelled) setCatalog(c); });
+        const only = (JSON.parse(domainKey) as Domain[] | null) ?? undefined;
+        loadCatalog(locale, only).then((c) => { if (!cancelled) setCatalog(c); });
         return () => { cancelled = true; };
-      }, [locale]);
+      }, [locale, domainKey]);
 
       const value = useMemo(() => ({ catalog, overrides }), [catalog, overrides]);
       return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
