@@ -62,6 +62,19 @@ defmodule GettextTsTest do
       assert File.exists?(Path.join(tmp, "react.tsx"))
     end
 
+    test "the provider accepts initialCatalog and seeds state with it", %{tmp: tmp} do
+      Mix.Task.rerun("gettext_ts.codegen", [])
+
+      react = File.read!(Path.join(tmp, "react.tsx"))
+
+      assert react =~ "initialCatalog?: LocaleCatalog"
+      # Seeded as INITIAL STATE, not merged after mount: the server render has
+      # to be translated already, otherwise the prop buys nothing.
+      assert react =~ "useState<LocaleCatalog | null>(initialCatalog ?? null)"
+      # And the lazy load stays — the prop seeds, it does not replace.
+      assert react =~ "loadCatalog(locale)"
+    end
+
     test "--check passes when fresh, fails when stale", %{tmp: tmp} do
       Mix.Task.rerun("gettext_ts.codegen", [])
       assert Mix.Task.rerun("gettext_ts.codegen", ["--check"]) == :ok

@@ -11,6 +11,8 @@ defmodule Mix.Tasks.GettextTs.Codegen do
       `%{var}` interpolation and an overrides layer for runtime-edited
       translations.
     * `react.tsx` — provider + `useT(domain?)` hook (unless `react: false`).
+      The provider takes an optional `initialCatalog` so a server-rendered
+      route tree is already translated before hydration.
 
   Files are only written when content changed, so `--check` in CI is cheap.
   """
@@ -165,7 +167,7 @@ defmodule Mix.Tasks.GettextTs.Codegen do
 
     const Ctx = createContext<{ catalog: LocaleCatalog | null; overrides?: Overrides }>({ catalog: null });
 
-    /** Locale-aware translation hook. Renders source-language keys until the catalog loads. */
+    /** Locale-aware translation hook. Renders source-language keys until a catalog is present. */
     export function useT(domain: string = #{inspect(default_domain)}): TFunction {
       const { catalog, overrides } = useContext(Ctx);
       return useMemo(() => createT(catalog, domain, overrides), [catalog, domain, overrides]);
@@ -175,11 +177,18 @@ defmodule Mix.Tasks.GettextTs.Codegen do
      * Loads the locale's catalog lazily. `overrides` carries runtime-edited
      * translations (e.g. admin-changed copy fetched from the backend) and is
      * layered over the compiled catalog.
+     *
+     * `initialCatalog` seeds the FIRST render, server included. Without it the
+     * catalog is null until the effect resolves, so a server-rendered page in a
+     * non-source locale ships source-language HTML and swaps after hydration —
+     * invisible to crawlers and a visible flash to everyone else. Import the
+     * locale's catalog statically and pass it here for a per-locale route tree;
+     * the lazy load still runs and refreshes the state afterwards.
      */
-    export function I18nProvider({ locale, overrides, children }: {
-      locale: string; overrides?: Overrides; children: ReactNode;
+    export function I18nProvider({ locale, overrides, initialCatalog, children }: {
+      locale: string; overrides?: Overrides; initialCatalog?: LocaleCatalog; children: ReactNode;
     }) {
-      const [catalog, setCatalog] = useState<LocaleCatalog | null>(null);
+      const [catalog, setCatalog] = useState<LocaleCatalog | null>(initialCatalog ?? null);
 
       useEffect(() => {
         let cancelled = false;

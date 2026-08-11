@@ -79,6 +79,23 @@ tn("Level %{level}!", { level: 5 });
 Keys are typed (`TranslationKey` union) but plain strings are accepted, so
 new copy renders in the source language before codegen has run.
 
+### Server-rendered locales
+
+The catalog is fetched lazily, so a page server-rendered in a non-source
+locale ships source-language HTML and swaps after hydration — a crawler
+never sees the translation. Seed the first render instead:
+
+```tsx
+import nl from "@/lib/i18n/catalog/nl";
+
+<I18nProvider locale="nl" initialCatalog={nl}>
+```
+
+Import it in the client component that renders the provider, not in a
+server component: a static import puts the catalog in a cacheable JS chunk,
+a prop passed across the boundary puts it in every page's payload. The lazy
+load still runs afterwards and refreshes the state.
+
 ## Configuration
 
 ```elixir
