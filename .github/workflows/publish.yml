@@ -49,4 +49,4 @@ jobs:
         if: steps.guard.outputs.published == 'false'
         run: mix hex.publish --yes
         env:
-          HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
+          HEX_API_KEY: ${{ secrets.HEX_VULCORA_KEY }}
