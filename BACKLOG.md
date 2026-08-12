@@ -1,6 +1,6 @@
 # Backlog
 
-## From the swedishspytours fas 3 migration (2026-08-11)
+## From the first real consumer migration (2026-08-11)
 
 1. **Default `extract_ignore` is too aggressive for Swedish copy.** The
    `~r/^[a-z][a-z0-9_]*$/` rule silently drops every single lowercase-word
@@ -24,7 +24,7 @@
    mirror them in a backend module with `dgettext_noop` plus a test that
    fails when the mirrors drift.
 
-## From the swedishspytours fas 6 migration (2026-08-11)
+## From the a client app fas 6 migration (2026-08-11)
 
 6. **No way to ask what a chunk costs.** The per-domain split was sized by
    parsing the bundler's output by hand. A `mix gettext_ts.codegen --stats`

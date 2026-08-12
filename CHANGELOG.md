@@ -3,7 +3,7 @@
 ## [0.2.0] - 2026-08-11
 
 **The domain, not the locale, is the unit of loading.** Measured in
-swedishspytours: 573 of 849 msgids were admin-panel copy, and every public
+a client app: 573 of 849 msgids were admin-panel copy, and every public
 English page downloaded all of them — 30 kB gzipped of a catalog no visitor
 can reach.
 
