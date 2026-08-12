@@ -1,0 +1,5 @@
+msgid "Close"
+msgstr "Avsluta ärendet"
+
+msgid "Level %{level}!"
+msgstr "Nivå %{level}!"

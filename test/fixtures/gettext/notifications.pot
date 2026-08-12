@@ -1,0 +1,5 @@
+msgid "Close"
+msgstr ""
+
+msgid "Level %{level}!"
+msgstr ""
